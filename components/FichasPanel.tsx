@@ -2,12 +2,13 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useData } from '../contexts/DataContext';
 import { supabase } from '../services/supabaseClient';
 import type { ProdutoBase, FichaTecnicaItem, FichaTecnica } from '../types';
-import { Plus, Trash2, Copy, BookOpen, ClipboardCopy, ChevronsRight, RefreshCcw, Calculator } from 'lucide-react';
+import { Plus, Trash2, Copy, BookOpen, ClipboardCopy, ChevronsRight, RefreshCcw, Calculator, Upload } from 'lucide-react';
 import { Card, CardHeader, CardTitle } from './ui/Card';
 import { useNotification } from '../contexts/NotificationContext';
 import EmptyState from './ui/EmptyState';
 import Spinner from './ui/Spinner';
 import CopyFichaModal from './modals/CopyFichaModal';
+import ImportModal from './modals/ImportModal';
 
 const InsumoEspecialQuantidadeEditor: React.FC<{
     item: FichaTecnicaItem;
@@ -91,6 +92,7 @@ const FichasPanel: React.FC = () => {
     const [loadingFicha, setLoadingFicha] = useState(false);
     const [markupKey, setMarkupKey] = useState<'markup_p1' | 'markup_p2' | 'markup_p3'>('markup_p1');
     const [isCopyModalOpen, setIsCopyModalOpen] = useState(false);
+    const [isImportModalOpen, setIsImportModalOpen] = useState(false);
     const [editableProductPrice, setEditableProductPrice] = useState<string>('');
     const [isSavingPrice, setIsSavingPrice] = useState(false);
     const [simulationSelections, setSimulationSelections] = useState<Record<number, number>>({});
@@ -485,9 +487,18 @@ const FichasPanel: React.FC = () => {
 
     return (
         <div className="space-y-6">
-            <div>
-                <h1 className="text-3xl font-bold text-slate-900">Fichas Técnicas</h1>
-                <p className="text-slate-500 mt-1">Gerencie os insumos de cada produto e analise custos e preços.</p>
+            <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4">
+                <div>
+                    <h1 className="text-3xl font-bold text-slate-900">Fichas Técnicas</h1>
+                    <p className="text-slate-500 mt-1">Gerencie os insumos de cada produto e analise custos e preços.</p>
+                </div>
+                <button
+                    onClick={() => setIsImportModalOpen(true)}
+                    className="flex items-center justify-center px-4 py-2 bg-primary-600 text-white font-semibold rounded-lg shadow hover:bg-primary-700 transition-all self-start md:self-center"
+                >
+                    <Upload size={18} className="mr-2" />
+                    Importar Fichas
+                </button>
             </div>
             
             <Card>
@@ -774,6 +785,11 @@ const FichasPanel: React.FC = () => {
                     onConfirmCopy={handleConfirmCopy}
                 />
             )}
+            <ImportModal
+                isOpen={isImportModalOpen}
+                onClose={() => setIsImportModalOpen(false)}
+                initialType="fichas_tecnicas"
+            />
         </div>
     );
 };

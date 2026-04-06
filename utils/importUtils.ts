@@ -18,8 +18,12 @@ export const templates: Record<string, { headers: string[], example: string }> =
         example: 'João da Silva'
     },
     fichas_tecnicas: {
-        headers: ['produto_nome', 'insumo_nome', 'quantidade'],
-        example: 'Camisa Polo Piquet;Malha Piquet;1.5'
+        // produto_nome e quantidade sao obrigatorios.
+        // informe insumo_nome OU insumo_especial_nome (um dos dois).
+        // Para quantidade por tamanho, preencha quantidade_adulto e
+        // quantidade_infantil e deixe quantidade em branco.
+        headers: ['produto_nome', 'insumo_nome', 'insumo_especial_nome', 'quantidade', 'quantidade_adulto', 'quantidade_infantil'],
+        example: 'Camisa Polo Piquê;Malha Piquet;;1.5;;'
     }
 };
 

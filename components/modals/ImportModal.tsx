@@ -10,13 +10,18 @@ type ImportType = 'insumos' | 'produtos' | 'adicionais' | 'vendedores' | 'fichas
 interface ImportModalProps {
     isOpen: boolean;
     onClose: () => void;
+    initialType?: ImportType;
 }
 
-const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => {
-    const [importType, setImportType] = useState<ImportType>('insumos');
+const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialType }) => {
+    const [importType, setImportType] = useState<ImportType>(initialType ?? 'insumos');
     const [file, setFile] = useState<File | null>(null);
     const [loading, setLoading] = useState(false);
-    const { fetchData, produtosBase, insumos, recalculateProdutoCost } = useData();
+    const { fetchData, produtosBase, insumos, insumosEspeciais, recalculateProdutoCost } = useData();
+
+    React.useEffect(() => {
+        if (isOpen && initialType) setImportType(initialType);
+    }, [isOpen, initialType]);
     const { showNotification } = useNotification();
 
     if (!isOpen) return null;
@@ -50,7 +55,14 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => {
             
             const expectedHeaders = templates[importType].headers;
             const fileHeaders = Object.keys(parsedData[0]);
-            const hasAllHeaders = expectedHeaders.every(h => fileHeaders.includes(h));
+            // Para fichas_tecnicas apenas produto_nome e quantidade sao
+            // realmente obrigatorios; os demais campos (insumo_nome,
+            // insumo_especial_nome, quantidade_adulto, quantidade_infantil)
+            // sao opcionais por linha.
+            const requiredHeaders = importType === 'fichas_tecnicas'
+                ? ['produto_nome']
+                : expectedHeaders;
+            const hasAllHeaders = requiredHeaders.every(h => fileHeaders.includes(h));
             if (!hasAllHeaders) {
                 throw new Error(`Cabeçalhos inválidos. Esperado: ${expectedHeaders.join(', ')}`);
             }
@@ -59,22 +71,62 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose }) => {
             const uniqueProductIdsToUpdate = new Set<number>();
 
             if (importType === 'fichas_tecnicas') {
-                const produtoMap = new Map(produtosBase.map(p => [p.nome, p.id]));
-                const insumoMap = new Map(insumos.map(i => [i.nome, i.id]));
-                
-                dataToInsert = parsedData.map((row, index) => {
-                    const produtoId = produtoMap.get(row.produto_nome);
-                    const insumoId = insumoMap.get(row.insumo_nome);
-                    const quantidade = parseFloat(row.quantidade);
+                // Normaliza para comparacao case/acentos-insensivel
+                const norm = (s: string) => (s || '').toString().trim().toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                const produtoMap = new Map(produtosBase.map(p => [norm(p.nome), p.id]));
+                const insumoMap = new Map(insumos.map(i => [norm(i.nome), i.id]));
+                const insumoEspecialMap = new Map(insumosEspeciais.map(i => [norm(i.nome), i.id]));
 
-                    // FIX: Using `typeof` provides a more robust type guard, which resolves the TypeScript error
-                    // and correctly handles potential `0` values for IDs.
+                dataToInsert = parsedData.map((row, index) => {
+                    const produtoId = produtoMap.get(norm(row.produto_nome));
                     if (typeof produtoId !== 'number') throw new Error(`Linha ${index + 2}: Produto "${row.produto_nome}" não encontrado.`);
-                    if (typeof insumoId !== 'number') throw new Error(`Linha ${index + 2}: Insumo "${row.insumo_nome}" não encontrado.`);
-                    if (isNaN(quantidade) || quantidade <= 0) throw new Error(`Linha ${index + 2}: Quantidade inválida.`);
-                    
+
+                    const insumoNome = (row.insumo_nome || '').toString().trim();
+                    const insumoEspecialNome = (row.insumo_especial_nome || '').toString().trim();
+                    if (!insumoNome && !insumoEspecialNome) {
+                        throw new Error(`Linha ${index + 2}: informe insumo_nome OU insumo_especial_nome.`);
+                    }
+                    if (insumoNome && insumoEspecialNome) {
+                        throw new Error(`Linha ${index + 2}: preencha apenas um entre insumo_nome e insumo_especial_nome.`);
+                    }
+
+                    let insumoId: number | null = null;
+                    let insumoEspecialId: number | null = null;
+                    if (insumoNome) {
+                        const found = insumoMap.get(norm(insumoNome));
+                        if (typeof found !== 'number') throw new Error(`Linha ${index + 2}: Insumo "${insumoNome}" não encontrado.`);
+                        insumoId = found;
+                    } else {
+                        const found = insumoEspecialMap.get(norm(insumoEspecialNome));
+                        if (typeof found !== 'number') throw new Error(`Linha ${index + 2}: Insumo Especial "${insumoEspecialNome}" não encontrado.`);
+                        insumoEspecialId = found;
+                    }
+
+                    // Quantidade: geral OU (adulto + infantil)
+                    const parseNum = (v: any): number | null => {
+                        if (v === undefined || v === null || String(v).trim() === '') return null;
+                        const n = parseFloat(String(v).replace(',', '.'));
+                        return isNaN(n) ? null : n;
+                    };
+                    const qGeral = parseNum(row.quantidade);
+                    const qAdulto = parseNum(row.quantidade_adulto);
+                    const qInfantil = parseNum(row.quantidade_infantil);
+
+                    let payload: any = { produto_base_id: produtoId, insumo_id: insumoId, insumo_especial_id: insumoEspecialId };
+                    if (qGeral !== null && qGeral > 0) {
+                        payload.quantidade = qGeral;
+                        payload.quantidade_adulto = null;
+                        payload.quantidade_infantil = null;
+                    } else if (qAdulto !== null && qAdulto > 0 && qInfantil !== null && qInfantil > 0) {
+                        payload.quantidade = null;
+                        payload.quantidade_adulto = qAdulto;
+                        payload.quantidade_infantil = qInfantil;
+                    } else {
+                        throw new Error(`Linha ${index + 2}: informe quantidade OU (quantidade_adulto E quantidade_infantil).`);
+                    }
+
                     uniqueProductIdsToUpdate.add(produtoId);
-                    return { produto_base_id: produtoId, insumo_id: insumoId, quantidade };
+                    return payload;
                 });
                 
                 if (uniqueProductIdsToUpdate.size > 0) {
