@@ -73,16 +73,50 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialType 
             if (importType === 'fichas_tecnicas') {
                 // Normaliza para comparacao case/acentos-insensivel
                 const norm = (s: string) => (s || '').toString().trim().toLocaleLowerCase('pt-BR').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+                // Normaliza um header: minusculas, sem acento, sem espacos
+                // ou separadores. "Quantidade Adulto" -> "quantidadeadulto".
+                const normHeader = (s: string) => norm(s).replace(/[\s_\-./]+/g, '');
+
+                // Aliases aceitos para cada campo logico
+                const aliases: Record<string, string[]> = {
+                    produto_nome:        ['produtonome', 'produto', 'nomeproduto', 'nomedoproduto'],
+                    insumo_nome:         ['insumonome', 'insumo', 'nomeinsumo', 'nomedoinsumo', 'insumocomum', 'insumonomecomum'],
+                    insumo_especial_nome:['insumoespecialnome', 'insumoespecial', 'nomeinsumoespecial', 'especial', 'nomedoinsumoespecial'],
+                    quantidade:          ['quantidade', 'qtd', 'qtde', 'quantidadegeral', 'qtdgeral'],
+                    quantidade_adulto:   ['quantidadeadulto', 'qtdadulto', 'qtdeadulto', 'adulto', 'quantidadead'],
+                    quantidade_infantil: ['quantidadeinfantil', 'qtdinfantil', 'qtdeinfantil', 'infantil', 'quantidadeinf'],
+                };
+
+                // Mapeia chave logica -> nome de coluna real no arquivo
+                const headerMap: Record<string, string | undefined> = {};
+                const headersNormToReal = new Map<string, string>();
+                for (const h of fileHeaders) headersNormToReal.set(normHeader(h), h);
+                for (const [key, opts] of Object.entries(aliases)) {
+                    for (const opt of opts) {
+                        const real = headersNormToReal.get(opt);
+                        if (real) { headerMap[key] = real; break; }
+                    }
+                }
+
+                if (!headerMap.produto_nome) {
+                    throw new Error(`Cabeçalho "produto_nome" não encontrado. Detectados: ${fileHeaders.join(', ')}`);
+                }
+                const getCell = (row: any, key: string) => {
+                    const col = headerMap[key];
+                    return col ? row[col] : undefined;
+                };
+
                 const produtoMap = new Map(produtosBase.map(p => [norm(p.nome), p.id]));
                 const insumoMap = new Map(insumos.map(i => [norm(i.nome), i.id]));
                 const insumoEspecialMap = new Map(insumosEspeciais.map(i => [norm(i.nome), i.id]));
 
                 dataToInsert = parsedData.map((row, index) => {
-                    const produtoId = produtoMap.get(norm(row.produto_nome));
-                    if (typeof produtoId !== 'number') throw new Error(`Linha ${index + 2}: Produto "${row.produto_nome}" não encontrado.`);
+                    const produtoNomeRaw = getCell(row, 'produto_nome');
+                    const produtoId = produtoMap.get(norm(produtoNomeRaw));
+                    if (typeof produtoId !== 'number') throw new Error(`Linha ${index + 2}: Produto "${produtoNomeRaw}" não encontrado.`);
 
-                    const insumoNome = (row.insumo_nome || '').toString().trim();
-                    const insumoEspecialNome = (row.insumo_especial_nome || '').toString().trim();
+                    const insumoNome = (getCell(row, 'insumo_nome') || '').toString().trim();
+                    const insumoEspecialNome = (getCell(row, 'insumo_especial_nome') || '').toString().trim();
                     if (!insumoNome && !insumoEspecialNome) {
                         throw new Error(`Linha ${index + 2}: informe insumo_nome OU insumo_especial_nome.`);
                     }
@@ -108,9 +142,9 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialType 
                         const n = parseFloat(String(v).replace(',', '.'));
                         return isNaN(n) ? null : n;
                     };
-                    const qGeral = parseNum(row.quantidade);
-                    const qAdulto = parseNum(row.quantidade_adulto);
-                    const qInfantil = parseNum(row.quantidade_infantil);
+                    const qGeral = parseNum(getCell(row, 'quantidade'));
+                    const qAdulto = parseNum(getCell(row, 'quantidade_adulto'));
+                    const qInfantil = parseNum(getCell(row, 'quantidade_infantil'));
 
                     let payload: any = { produto_base_id: produtoId, insumo_id: insumoId, insumo_especial_id: insumoEspecialId };
                     // Prioriza quantidade por tamanho quando adulto+infantil
