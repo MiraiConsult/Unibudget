@@ -147,21 +147,20 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialType 
                     const qInfantil = parseNum(getCell(row, 'quantidade_infantil'));
 
                     let payload: any = { produto_base_id: produtoId, insumo_id: insumoId, insumo_especial_id: insumoEspecialId };
-                    // Prioriza quantidade por tamanho quando adulto+infantil
-                    // estiverem preenchidos, mesmo que a coluna 'quantidade'
-                    // tambem tenha valor (o constraint do banco aceita apenas
-                    // um dos dois modos).
-                    if (qAdulto !== null && qAdulto > 0 && qInfantil !== null && qInfantil > 0) {
-                        payload.quantidade = null;
-                        payload.quantidade_adulto = qAdulto;
-                        payload.quantidade_infantil = qInfantil;
-                    } else if (qGeral !== null && qGeral > 0) {
-                        payload.quantidade = qGeral;
-                        payload.quantidade_adulto = null;
-                        payload.quantidade_infantil = null;
-                    } else {
-                        throw new Error(`Linha ${index + 2}: informe quantidade OU (quantidade_adulto E quantidade_infantil).`);
+                    // Regra: a coluna 'quantidade' (geral) sempre recebe o
+                    // valor do tamanho adulto, se ele estiver preenchido.
+                    // Caso contrario, usa o valor da coluna 'quantidade'
+                    // do arquivo. As colunas adulto/infantil ficam nulas.
+                    const quantidadeFinal = qAdulto !== null && qAdulto > 0
+                        ? qAdulto
+                        : (qGeral !== null && qGeral > 0 ? qGeral : null);
+
+                    if (quantidadeFinal === null) {
+                        throw new Error(`Linha ${index + 2}: informe quantidade ou quantidade_adulto.`);
                     }
+                    payload.quantidade = quantidadeFinal;
+                    payload.quantidade_adulto = null;
+                    payload.quantidade_infantil = null;
 
                     uniqueProductIdsToUpdate.add(produtoId);
                     return payload;
