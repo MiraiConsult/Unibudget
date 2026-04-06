@@ -9,6 +9,7 @@ const PublicConsumePage: React.FC = () => {
     const { showNotification } = useNotification();
     
     const [insumoId, setInsumoId] = useState<number | null>(null);
+    const [tenantId, setTenantId] = useState<string | null>(null);
     const [quantidade, setQuantidade] = useState<string>('');
     const [motivo, setMotivo] = useState<string>('Produção');
     const [codigoAcesso, setCodigoAcesso] = useState<string>('');
@@ -21,7 +22,20 @@ const PublicConsumePage: React.FC = () => {
         if (id) {
             setInsumoId(Number(id));
         }
+        const t = params.get('tenant_id');
+        if (t) setTenantId(t);
     }, []);
+
+    // Filtra tudo pelo tenant_id da URL para evitar vazamento entre
+    // empresas no fluxo público (QR Code). Se o QR não tiver tenant_id
+    // (etiquetas antigas), fica em modo legado sem filtro — nesse caso
+    // o insert irá falhar por NOT NULL e o operador verá um erro.
+    const tenantFilter = <T extends { tenant_id?: string | null }>(rows: T[]) =>
+        tenantId ? rows.filter(r => (r as any).tenant_id === tenantId) : rows;
+    const insumosScoped = tenantFilter(insumos as any);
+    const comprasScoped = tenantFilter(compras as any);
+    const consumosScoped = tenantFilter(consumos as any);
+    const funcionariosScoped = tenantFilter(funcionarios as any);
 
     const handleBack = () => {
         window.location.href = window.location.origin;
@@ -35,7 +49,7 @@ const PublicConsumePage: React.FC = () => {
         );
     }
 
-    const selectedInsumo = insumos.find(i => i.id === insumoId);
+    const selectedInsumo = insumosScoped.find(i => i.id === insumoId);
 
     if (!selectedInsumo) {
         return (
@@ -51,8 +65,9 @@ const PublicConsumePage: React.FC = () => {
                     <div className="text-left bg-slate-100 p-3 rounded-lg text-xs text-slate-500 mb-6 font-mono border border-slate-200">
                         <p className="font-bold text-slate-700 mb-1">Informações de Diagnóstico:</p>
                         <p>ID na URL: {insumoId ? insumoId : 'Nenhum ID encontrado'}</p>
-                        <p>Insumos carregados: {insumos.length}</p>
-                        {insumos.length === 0 && (
+                        <p>Insumos carregados (tenant): {insumosScoped.length} / {insumos.length} total</p>
+                        <p>Tenant da URL: {tenantId || '(ausente)'}</p>
+                        {insumosScoped.length === 0 && (
                             <p className="text-danger-600 mt-2 font-semibold">
                                 ⚠️ Zero insumos carregados. Isso geralmente indica que as permissões do banco de dados (RLS) não foram aplicadas para usuários anônimos.
                             </p>
@@ -68,8 +83,8 @@ const PublicConsumePage: React.FC = () => {
     }
 
     const currentStock = (() => {
-        const totalCompras = compras.filter(c => c.insumo_id === selectedInsumo.id).reduce((sum, c) => sum + Number(c.quantidade), 0);
-        const totalConsumos = consumos.filter(c => c.insumo_id === selectedInsumo.id).reduce((sum, c) => sum + Number(c.quantidade), 0);
+        const totalCompras = comprasScoped.filter(c => c.insumo_id === selectedInsumo.id).reduce((sum, c) => sum + Number(c.quantidade), 0);
+        const totalConsumos = consumosScoped.filter(c => c.insumo_id === selectedInsumo.id).reduce((sum, c) => sum + Number(c.quantidade), 0);
         return totalCompras - totalConsumos;
     })();
 
@@ -93,9 +108,14 @@ const PublicConsumePage: React.FC = () => {
             }
         }
 
-        const funcionario = funcionarios.find(f => f.codigo_acesso === codigoAcesso);
+        const funcionario = funcionariosScoped.find(f => f.codigo_acesso === codigoAcesso);
         if (!funcionario) {
             showNotification('Código de acesso inválido ou não encontrado.', 'danger');
+            return;
+        }
+
+        if (!tenantId) {
+            showNotification('QR Code sem tenant_id. Gere uma etiqueta nova a partir do sistema.', 'danger');
             return;
         }
 
@@ -106,7 +126,8 @@ const PublicConsumePage: React.FC = () => {
             quantidade: qtd,
             motivo: motivo || null,
             responsavel: funcionario.nome,
-            funcionario_id: funcionario.id
+            funcionario_id: funcionario.id,
+            tenant_id: tenantId,
         });
         setIsSubmitting(false);
 

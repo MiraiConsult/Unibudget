@@ -1,7 +1,8 @@
-import React, { useRef } from 'react';
+import React, { useRef, useEffect, useState } from 'react';
 import QRCode from 'react-qr-code';
 import { X, Printer } from 'lucide-react';
 import type { Insumo } from '../../types';
+import { supabase } from '../../services/supabaseClient';
 
 interface QRCodeModalProps {
     isOpen: boolean;
@@ -11,11 +12,29 @@ interface QRCodeModalProps {
 
 const QRCodeModal: React.FC<QRCodeModalProps> = ({ isOpen, onClose, insumo }) => {
     const qrRef = useRef<HTMLDivElement>(null);
+    const [tenantId, setTenantId] = useState<string | null>(null);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        // Usa o tenant_id do próprio insumo se disponível; caso contrário
+        // busca via RPC get_my_tenant_id(). Assim o QR fica amarrado ao
+        // tenant que o gerou e a página pública consegue filtrar.
+        const fromInsumo = (insumo as any)?.tenant_id as string | null | undefined;
+        if (fromInsumo) {
+            setTenantId(fromInsumo);
+            return;
+        }
+        supabase.rpc('get_my_tenant_id').then(({ data }) => {
+            if (data) setTenantId(data as unknown as string);
+        });
+    }, [isOpen, insumo]);
 
     if (!isOpen || !insumo) return null;
 
-    // The URL that the QR code will point to
-    const qrUrl = `${window.location.origin}?action=consume&insumo_id=${insumo.id}`;
+    // The URL that the QR code will point to — inclui tenant_id para
+    // isolar o fluxo de consumo público entre empresas.
+    const tenantParam = tenantId ? `&tenant_id=${encodeURIComponent(tenantId)}` : '';
+    const qrUrl = `${window.location.origin}?action=consume&insumo_id=${insumo.id}${tenantParam}`;
 
     const handlePrint = () => {
         const printContent = qrRef.current;
