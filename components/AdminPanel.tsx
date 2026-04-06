@@ -149,19 +149,39 @@ const AdminPanel: React.FC = () => {
         if (!window.confirm(`Tem certeza que deseja excluir ${selectedIds.size} item(ns) selecionado(s)? Esta ação é irreversível.`)) return;
 
         const ids = Array.from(selectedIds);
-        const failures: string[] = [];
-        for (const id of ids) {
-            const err = await cascadeDelete(tableName, id);
-            if (err) failures.push(`#${id}: ${err}`);
+
+        try {
+            // Cascata em lote: 1 query por tabela dependente, usando IN (ids).
+            if (tableName === 'produtos_base') {
+                const { error: e1 } = await supabase.from('fichas_tecnicas').delete().in('produto_base_id', ids);
+                if (e1) throw new Error(`fichas_tecnicas: ${e1.message}`);
+                const { error: e2 } = await supabase.from('orcamento_itens').delete().in('produto_base_id', ids);
+                if (e2) throw new Error(`orcamento_itens: ${e2.message}`);
+                const { error: e3 } = await supabase.from('pedido_layouts_externos').update({ produto_base_id: null }).in('produto_base_id', ids);
+                if (e3) throw new Error(`pedido_layouts_externos: ${e3.message}`);
+                const { error: e4 } = await supabase.from('produto_externo_mapa').delete().in('produto_base_id', ids);
+                if (e4) throw new Error(`produto_externo_mapa: ${e4.message}`);
+            }
+            if (tableName === 'insumos') {
+                const { error: e1 } = await supabase.from('fichas_tecnicas').delete().in('insumo_id', ids);
+                if (e1) throw new Error(`fichas_tecnicas: ${e1.message}`);
+                const { error: e2 } = await supabase.from('insumos_especiais_opcoes').delete().in('insumo_id', ids);
+                if (e2) throw new Error(`insumos_especiais_opcoes: ${e2.message}`);
+                await supabase.from('estoque_insumos').delete().in('insumo_id', ids);
+                await supabase.from('compras').delete().in('insumo_id', ids);
+                await supabase.from('consumo_estoque').delete().in('insumo_id', ids);
+                await supabase.from('movimentacoes_estoque').delete().in('insumo_id', ids);
+            }
+
+            const { error } = await supabase.from(tableName).delete().in('id', ids);
+            if (error) throw new Error(error.message);
+
+            showNotification(`${ids.length} item(ns) excluído(s) com sucesso!`, 'success');
+        } catch (err: any) {
+            console.error('Bulk delete error:', err);
+            showNotification(`Falha ao excluir em lote: ${err.message}`, 'danger');
         }
 
-        if (failures.length === 0) {
-            showNotification(`${ids.length} item(ns) excluído(s) com sucesso!`, 'success');
-        } else if (failures.length < ids.length) {
-            showNotification(`Excluídos ${ids.length - failures.length}/${ids.length}. Falhas: ${failures.join('; ')}`, 'warning');
-        } else {
-            showNotification(`Falha ao excluir: ${failures.join('; ')}`, 'danger');
-        }
         clearSelection();
         fetchData();
     };
