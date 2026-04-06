@@ -147,10 +147,11 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialType 
                     const qInfantil = parseNum(getCell(row, 'quantidade_infantil'));
 
                     let payload: any = { produto_base_id: produtoId, insumo_id: insumoId, insumo_especial_id: insumoEspecialId };
-                    // Regra: a coluna 'quantidade' (geral) sempre recebe o
-                    // valor do tamanho adulto, se ele estiver preenchido.
-                    // Caso contrario, usa o valor da coluna 'quantidade'
-                    // do arquivo. As colunas adulto/infantil ficam nulas.
+                    // Regra: a coluna 'quantidade' (geral) e 'quantidade_adulto'
+                    // recebem o mesmo valor. Se o arquivo trouxer adulto, ele
+                    // e copiado para geral. Se trouxer apenas geral, ele e
+                    // copiado para adulto. quantidade_infantil so e gravado
+                    // se vier explicitamente preenchido.
                     const quantidadeFinal = qAdulto !== null && qAdulto > 0
                         ? qAdulto
                         : (qGeral !== null && qGeral > 0 ? qGeral : null);
@@ -159,8 +160,8 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialType 
                         throw new Error(`Linha ${index + 2}: informe quantidade ou quantidade_adulto.`);
                     }
                     payload.quantidade = quantidadeFinal;
-                    payload.quantidade_adulto = null;
-                    payload.quantidade_infantil = null;
+                    payload.quantidade_adulto = quantidadeFinal;
+                    payload.quantidade_infantil = qInfantil !== null && qInfantil > 0 ? qInfantil : null;
 
                     uniqueProductIdsToUpdate.add(produtoId);
                     return payload;
