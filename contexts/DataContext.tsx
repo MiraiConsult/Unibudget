@@ -21,7 +21,7 @@ interface DataContextType {
   recalculateProdutoCost: (produtoId: number) => Promise<void>;
   addCompra: (compra: Omit<Compra, 'id' | 'created_at'>) => Promise<boolean>;
   deleteCompra: (id: number) => Promise<boolean>;
-  addConsumo: (consumo: Omit<Consumo, 'id' | 'created_at'>) => Promise<boolean>;
+  addConsumo: (consumo: Omit<Consumo, 'id' | 'created_at'> & { tenant_id?: string | null }) => Promise<boolean>;
 }
 
 const DataContext = createContext<DataContextType | undefined>(undefined);
@@ -185,8 +185,12 @@ export const DataProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
     }
   };
 
-  const addConsumo = async (consumo: Omit<Consumo, 'id' | 'created_at'>) => {
-    const { data, error } = await supabase.from('consumo_estoque').insert(consumo).select().single();
+  const addConsumo = async (consumo: Omit<Consumo, 'id' | 'created_at'> & { tenant_id?: string | null }) => {
+    // tenant_id é opcional: usuários autenticados dependem do DEFAULT
+    // get_my_tenant_id() no banco. O fluxo público (QR Code) PRECISA
+    // passar tenant_id explicitamente, pois get_my_tenant_id() retorna
+    // NULL para o role anon e a coluna é NOT NULL.
+    const { data, error } = await supabase.from('consumo_estoque').insert(consumo as any).select().single();
     if (error) {
         console.warn("Erro ao inserir consumo no Supabase, usando localStorage", error);
         const local = localStorage.getItem('unibudget_consumos');

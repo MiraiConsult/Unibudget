@@ -22,6 +22,24 @@ const AdminPanel: React.FC = () => {
     const [editingFuncionario, setEditingFuncionario] = useState<Partial<Funcionario> | null>(null);
     const [searchTerm, setSearchTerm] = useState('');
 
+    // Seleção em massa (por aba). Resetada ao trocar de aba.
+    const [selectedIds, setSelectedIds] = useState<Set<number>>(new Set());
+
+    const toggleSelected = (id: number) => {
+        setSelectedIds(prev => {
+            const next = new Set(prev);
+            if (next.has(id)) next.delete(id); else next.add(id);
+            return next;
+        });
+    };
+    const toggleSelectAll = (ids: number[]) => {
+        setSelectedIds(prev => {
+            const allSelected = ids.length > 0 && ids.every(id => prev.has(id));
+            return allSelected ? new Set() : new Set(ids);
+        });
+    };
+    const clearSelection = () => setSelectedIds(new Set());
+
     const handleEdit = (row: any) => setEditRow({ ...row });
     const handleCancel = () => {
         setEditRow(null);
@@ -105,6 +123,61 @@ const AdminPanel: React.FC = () => {
             fetchData();
             handleCancel();
         }
+    };
+
+    // Remove dependências de um único item antes de deletá-lo.
+    // Retorna string com erro, ou null em caso de sucesso.
+    const cascadeDelete = async (tableName: string, id: number): Promise<string | null> => {
+        if (tableName === 'produtos_base') {
+            const { error: fichaError } = await supabase.from('fichas_tecnicas').delete().eq('produto_base_id', id);
+            if (fichaError) return `Falha ao remover fichas técnicas: ${fichaError.message}`;
+            const { error: itemError } = await supabase.from('orcamento_itens').delete().eq('produto_base_id', id);
+            if (itemError) return `Falha ao remover itens de orçamento: ${itemError.message}`;
+            await supabase.from('pedido_layouts_externos').update({ produto_base_id: null }).eq('produto_base_id', id);
+            await supabase.from('produto_externo_mapa').delete().eq('produto_base_id', id);
+        }
+        if (tableName === 'insumos') {
+            await supabase.from('fichas_tecnicas').delete().eq('insumo_id', id);
+        }
+        const { error } = await supabase.from(tableName).delete().eq('id', id);
+        return error ? error.message : null;
+    };
+
+    const handleBulkDelete = async () => {
+        if (selectedIds.size === 0) return;
+        const tableName = activeTab === 'produtos' ? 'produtos_base' : activeTab;
+        if (!window.confirm(`Tem certeza que deseja excluir ${selectedIds.size} item(ns) selecionado(s)? Esta ação é irreversível.`)) return;
+
+        const ids = Array.from(selectedIds);
+        const failures: string[] = [];
+        for (const id of ids) {
+            const err = await cascadeDelete(tableName, id);
+            if (err) failures.push(`#${id}: ${err}`);
+        }
+
+        if (failures.length === 0) {
+            showNotification(`${ids.length} item(ns) excluído(s) com sucesso!`, 'success');
+        } else if (failures.length < ids.length) {
+            showNotification(`Excluídos ${ids.length - failures.length}/${ids.length}. Falhas: ${failures.join('; ')}`, 'warning');
+        } else {
+            showNotification(`Falha ao excluir: ${failures.join('; ')}`, 'danger');
+        }
+        clearSelection();
+        fetchData();
+    };
+
+    const handleBulkDeleteFuncionarios = async () => {
+        if (selectedIds.size === 0) return;
+        if (!window.confirm(`Tem certeza que deseja excluir ${selectedIds.size} funcionário(s)?`)) return;
+        const ids = Array.from(selectedIds);
+        const { error } = await supabase.from('funcionarios').delete().in('id', ids);
+        if (error) {
+            showNotification(`Falha ao excluir: ${error.message}`, 'danger');
+        } else {
+            showNotification(`${ids.length} funcionário(s) excluído(s) com sucesso!`, 'success');
+        }
+        clearSelection();
+        fetchData();
     };
 
     const handleDelete = async (id: number) => {
@@ -340,18 +413,49 @@ const AdminPanel: React.FC = () => {
              />
         }
 
+        const allIds = data.map(r => r.id);
+        const allSelected = allIds.length > 0 && allIds.every(id => selectedIds.has(id));
+
         return (
             <div className="overflow-x-auto">
+                {selectedIds.size > 0 && (
+                    <div className="flex items-center justify-between bg-primary-50 border border-primary-200 rounded-lg px-4 py-2 mb-3">
+                        <span className="text-sm text-primary-700 font-medium">{selectedIds.size} selecionado(s)</span>
+                        <div className="flex items-center gap-2">
+                            <button onClick={clearSelection} className="text-sm text-slate-600 hover:text-slate-800 px-3 py-1">Limpar</button>
+                            <button onClick={handleBulkDelete} className="flex items-center text-sm text-white bg-danger-600 hover:bg-danger-700 px-3 py-1.5 rounded-md font-medium">
+                                <Trash2 size={16} className="mr-1.5" /> Excluir selecionados
+                            </button>
+                        </div>
+                    </div>
+                )}
                 <table className="min-w-full bg-white">
                     <thead className="bg-slate-50">
                         <tr>
+                            <th className="py-3 px-4 w-10">
+                                <input
+                                    type="checkbox"
+                                    checked={allSelected}
+                                    onChange={() => toggleSelectAll(allIds)}
+                                    className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                                    title="Selecionar todos"
+                                />
+                            </th>
                             {columns.map(c => <th key={c.key} className="py-3 px-6 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">{c.label}</th>)}
                             <th className="py-3 px-6 text-right text-xs font-semibold text-slate-500 uppercase tracking-wider">Ações</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                         {data.map(row => (
-                            <tr key={row.id} className="hover:bg-slate-50 transition-colors">
+                            <tr key={row.id} className={`hover:bg-slate-50 transition-colors ${selectedIds.has(row.id) ? 'bg-primary-50/50' : ''}`}>
+                                <td className="py-4 px-4">
+                                    <input
+                                        type="checkbox"
+                                        checked={selectedIds.has(row.id)}
+                                        onChange={() => toggleSelected(row.id)}
+                                        className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                                    />
+                                </td>
                                 {columns.map(col => (
                                     <td key={col.key} className="py-4 px-6 text-sm text-slate-700">
                                         {editRow?.id === row.id ? renderInput(col, row, true) : (col.type === 'number' && typeof row[col.key] === 'number' ? row[col.key].toLocaleString('pt-BR', {style: 'currency', currency: 'BRL'}) : row[col.key])}
@@ -374,6 +478,7 @@ const AdminPanel: React.FC = () => {
                             </tr>
                         ))}
                          <tr className="bg-slate-100">
+                            <td className="py-3 px-4"></td>
                             {columns.map(col => (
                                 <td key={col.key} className="py-3 px-6">
                                     {col.type !== 'disabled' && renderInput(col, {}, false)}
@@ -409,7 +514,7 @@ const AdminPanel: React.FC = () => {
                     {(['insumos', 'insumos_especiais', 'produtos', 'adicionais', 'vendedores', 'funcionarios'] as AdminTab[]).map(tab => (
                         <button
                             key={tab}
-                            onClick={() => { setActiveTab(tab); handleCancel(); }}
+                            onClick={() => { setActiveTab(tab); handleCancel(); clearSelection(); }}
                             className={`relative capitalize py-3 px-4 text-sm font-medium transition-colors whitespace-nowrap ${activeTab === tab ? 'text-primary-600' : 'text-slate-500 hover:text-slate-800'}`}
                         >
                             {tab.replace('_', ' ')}
@@ -500,10 +605,35 @@ const AdminPanel: React.FC = () => {
                         </div>
                     )}
 
+                    {selectedIds.size > 0 && (
+                        <div className="flex items-center justify-between bg-primary-50 border border-primary-200 rounded-lg px-4 py-2">
+                            <span className="text-sm text-primary-700 font-medium">{selectedIds.size} selecionado(s)</span>
+                            <div className="flex items-center gap-2">
+                                <button onClick={clearSelection} className="text-sm text-slate-600 hover:text-slate-800 px-3 py-1">Limpar</button>
+                                <button onClick={handleBulkDeleteFuncionarios} className="flex items-center text-sm text-white bg-danger-600 hover:bg-danger-700 px-3 py-1.5 rounded-md font-medium">
+                                    <Trash2 size={16} className="mr-1.5" /> Excluir selecionados
+                                </button>
+                            </div>
+                        </div>
+                    )}
                     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
                         <table className="w-full text-left border-collapse">
                             <thead>
                                 <tr className="bg-slate-50 border-b border-slate-200">
+                                    <th className="py-3 px-4 w-10">
+                                        {(() => {
+                                            const filtered = funcionarios.filter(f => f.nome.toLowerCase().includes(searchTerm.toLowerCase()) || (f.setor && f.setor.toLowerCase().includes(searchTerm.toLowerCase())));
+                                            const ids = filtered.map(f => f.id);
+                                            const allSel = ids.length > 0 && ids.every(id => selectedIds.has(id));
+                                            return <input
+                                                type="checkbox"
+                                                checked={allSel}
+                                                onChange={() => toggleSelectAll(ids)}
+                                                className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                                                title="Selecionar todos"
+                                            />;
+                                        })()}
+                                    </th>
                                     <th className="py-3 px-4 text-sm font-semibold text-slate-600">Nome</th>
                                     <th className="py-3 px-4 text-sm font-semibold text-slate-600">Setor</th>
                                     <th className="py-3 px-4 text-sm font-semibold text-slate-600">Código de Acesso</th>
@@ -514,7 +644,15 @@ const AdminPanel: React.FC = () => {
                                 {funcionarios
                                     .filter(f => f.nome.toLowerCase().includes(searchTerm.toLowerCase()) || (f.setor && f.setor.toLowerCase().includes(searchTerm.toLowerCase())))
                                     .map(funcionario => (
-                                        <tr key={funcionario.id} className="hover:bg-slate-50 transition-colors">
+                                        <tr key={funcionario.id} className={`hover:bg-slate-50 transition-colors ${selectedIds.has(funcionario.id) ? 'bg-primary-50/50' : ''}`}>
+                                            <td className="py-3 px-4">
+                                                <input
+                                                    type="checkbox"
+                                                    checked={selectedIds.has(funcionario.id)}
+                                                    onChange={() => toggleSelected(funcionario.id)}
+                                                    className="h-4 w-4 rounded border-slate-300 text-primary-600 focus:ring-primary-500"
+                                                />
+                                            </td>
                                             <td className="py-3 px-4 text-sm text-slate-800">{funcionario.nome}</td>
                                             <td className="py-3 px-4 text-sm text-slate-600">{funcionario.setor || '-'}</td>
                                             <td className="py-3 px-4 text-sm text-slate-600 font-mono">{funcionario.codigo_acesso}</td>
