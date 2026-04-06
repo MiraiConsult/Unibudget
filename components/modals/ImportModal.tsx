@@ -113,14 +113,18 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialType 
                     const qInfantil = parseNum(row.quantidade_infantil);
 
                     let payload: any = { produto_base_id: produtoId, insumo_id: insumoId, insumo_especial_id: insumoEspecialId };
-                    if (qGeral !== null && qGeral > 0) {
-                        payload.quantidade = qGeral;
-                        payload.quantidade_adulto = null;
-                        payload.quantidade_infantil = null;
-                    } else if (qAdulto !== null && qAdulto > 0 && qInfantil !== null && qInfantil > 0) {
+                    // Prioriza quantidade por tamanho quando adulto+infantil
+                    // estiverem preenchidos, mesmo que a coluna 'quantidade'
+                    // tambem tenha valor (o constraint do banco aceita apenas
+                    // um dos dois modos).
+                    if (qAdulto !== null && qAdulto > 0 && qInfantil !== null && qInfantil > 0) {
                         payload.quantidade = null;
                         payload.quantidade_adulto = qAdulto;
                         payload.quantidade_infantil = qInfantil;
+                    } else if (qGeral !== null && qGeral > 0) {
+                        payload.quantidade = qGeral;
+                        payload.quantidade_adulto = null;
+                        payload.quantidade_infantil = null;
                     } else {
                         throw new Error(`Linha ${index + 2}: informe quantidade OU (quantidade_adulto E quantidade_infantil).`);
                     }
