@@ -3,7 +3,7 @@ import { supabase } from '../../services/supabaseClient';
 import { useData } from '../../contexts/DataContext';
 import { useNotification } from '../../contexts/NotificationContext';
 import { X, UploadCloud, FileDown, Loader2 } from 'lucide-react';
-import { downloadCSVTemplate, parseCSV, parseXLSX, templates } from '../../utils/importUtils';
+import { downloadCSVTemplate, parseCSV, parseXLSX, parseBRNumber, templates } from '../../utils/importUtils';
 
 type ImportType = 'insumos' | 'produtos' | 'adicionais' | 'vendedores' | 'fichas_tecnicas';
 
@@ -136,15 +136,11 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialType 
                         insumoEspecialId = found;
                     }
 
-                    // Quantidade: geral OU (adulto + infantil)
-                    const parseNum = (v: any): number | null => {
-                        if (v === undefined || v === null || String(v).trim() === '') return null;
-                        const n = parseFloat(String(v).replace(',', '.'));
-                        return isNaN(n) ? null : n;
-                    };
-                    const qGeral = parseNum(getCell(row, 'quantidade'));
-                    const qAdulto = parseNum(getCell(row, 'quantidade_adulto'));
-                    const qInfantil = parseNum(getCell(row, 'quantidade_infantil'));
+                    // Quantidade: geral OU (adulto + infantil). parseBRNumber
+                    // trata tanto formato en (1.5) quanto pt-BR (1,5 / 1.234,56).
+                    const qGeral = parseBRNumber(getCell(row, 'quantidade'));
+                    const qAdulto = parseBRNumber(getCell(row, 'quantidade_adulto'));
+                    const qInfantil = parseBRNumber(getCell(row, 'quantidade_infantil'));
 
                     let payload: any = { produto_base_id: produtoId, insumo_id: insumoId, insumo_especial_id: insumoEspecialId };
                     // Regra: a coluna 'quantidade' (geral) e 'quantidade_adulto'
@@ -180,53 +176,53 @@ const ImportModal: React.FC<ImportModalProps> = ({ isOpen, onClose, initialType 
                     try {
                         switch (importType) {
                             case 'insumos': {
-                                const custo = parseFloat(row.custo_unitario);
-                                if (!row.nome || !row.unidade_medida || isNaN(custo)) throw new Error(`Linha ${index + 2}: Dados inválidos.`);
+                                const custo = parseBRNumber(row.custo_unitario);
+                                if (!row.nome || !row.unidade_medida || custo === null) throw new Error(`Linha ${index + 2}: Dados inválidos.`);
                                 return { nome: row.nome, unidade_medida: row.unidade_medida, custo_unitario: custo };
                             }
                             case 'produtos': {
                                 if (!row.nome) {
                                     throw new Error(`Linha ${index + 2}: Nome do produto é obrigatório.`);
                                 }
-                            
+
                                 const precoRaw = row.preco_venda_manual;
                                 let precoFinal: number | null = null;
-                            
-                                if (precoRaw && String(precoRaw).trim()) {
-                                    const parsedPreco = parseFloat(precoRaw);
-                                    if (isNaN(parsedPreco)) {
+
+                                if (precoRaw !== undefined && precoRaw !== null && String(precoRaw).trim()) {
+                                    const parsedPreco = parseBRNumber(precoRaw);
+                                    if (parsedPreco === null) {
                                         throw new Error(`Linha ${index + 2}: Preço de venda manual inválido.`);
                                     }
                                     precoFinal = parsedPreco;
                                 }
-                            
-                                return { 
-                                    nome: row.nome, 
-                                    preco_venda_manual: precoFinal 
+
+                                return {
+                                    nome: row.nome,
+                                    preco_venda_manual: precoFinal
                                 };
                             }
                             case 'adicionais': {
-                                 const custo = parseFloat(row.custo_adicional);
+                                 const custo = parseBRNumber(row.custo_adicional);
                                  const precoRaw = row.preco_venda;
                                  let precoFinal: number | null = null;
-                                 
-                                 if (precoRaw && String(precoRaw).trim()) {
-                                     const parsedPreco = parseFloat(precoRaw);
-                                     if (isNaN(parsedPreco)) {
+
+                                 if (precoRaw !== undefined && precoRaw !== null && String(precoRaw).trim()) {
+                                     const parsedPreco = parseBRNumber(precoRaw);
+                                     if (parsedPreco === null) {
                                          throw new Error(`Linha ${index + 2}: Preço de venda inválido.`);
                                      }
                                      precoFinal = parsedPreco;
                                  }
-                             
-                                 if (!row.tipo_adicional || !row.nome_opcao || isNaN(custo)) {
+
+                                 if (!row.tipo_adicional || !row.nome_opcao || custo === null) {
                                      throw new Error(`Linha ${index + 2}: Dados obrigatórios (tipo, opção, custo) estão faltando ou são inválidos.`);
                                  }
-                                 
-                                 return { 
-                                     tipo_adicional: row.tipo_adicional, 
-                                     nome_opcao: row.nome_opcao, 
-                                     custo_adicional: custo, 
-                                     preco_venda: precoFinal 
+
+                                 return {
+                                     tipo_adicional: row.tipo_adicional,
+                                     nome_opcao: row.nome_opcao,
+                                     custo_adicional: custo,
+                                     preco_venda: precoFinal
                                  };
                             }
                             case 'vendedores': {

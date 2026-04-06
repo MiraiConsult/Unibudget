@@ -105,6 +105,35 @@ export const parseCSV = <T>(file: File): Promise<T[]> => {
     });
 };
 
+// Converte qualquer valor vindo do XLSX/CSV em numero, tolerando:
+// - numeros nativos (1.5)
+// - strings com ponto como separador decimal ("1.5", "1234.56")
+// - strings com virgula decimal e ponto como milhar ("1.234,56", "1,5")
+// - strings com espaco ("R$ 1.234,56") — simbolos sao removidos
+// Retorna null quando nao for possivel converter.
+export const parseBRNumber = (value: any): number | null => {
+    if (value === null || value === undefined) return null;
+    if (typeof value === 'number') return isNaN(value) ? null : value;
+    let s = String(value).trim();
+    if (!s) return null;
+    // remove qualquer coisa que nao seja digito, ponto, virgula ou sinal
+    s = s.replace(/[^0-9.,-]/g, '');
+    if (!s) return null;
+
+    const hasComma = s.includes(',');
+    const hasDot = s.includes('.');
+    if (hasComma && hasDot) {
+        // Formato pt-BR "1.234,56": ponto e milhar, virgula e decimal.
+        s = s.replace(/\./g, '').replace(',', '.');
+    } else if (hasComma) {
+        // Apenas virgula: assume decimal "1,5" -> "1.5"
+        s = s.replace(',', '.');
+    }
+    // Apenas ponto ou nenhum: ja esta no formato que o JS entende.
+    const n = parseFloat(s);
+    return isNaN(n) ? null : n;
+};
+
 export const parseXLSX = <T>(file: File): Promise<T[]> => {
     return new Promise((resolve, reject) => {
         const reader = new FileReader();
@@ -114,12 +143,13 @@ export const parseXLSX = <T>(file: File): Promise<T[]> => {
                 if (!data) {
                     return reject(new Error("O arquivo está vazio."));
                 }
-                // codepage 65001 = UTF-8. Garante que strings com ç/acentos
-                // em arquivos XLSX mais antigos sejam interpretadas corretamente.
+                // codepage 65001 = UTF-8 para planilhas antigas.
+                // raw: true mantem numeros como numeros (evita que o XLSX
+                // formate valores como "1.234,56" e perca centavos no parseFloat).
                 const workbook = XLSX.read(data, { type: 'array', codepage: 65001 });
                 const sheetName = workbook.SheetNames[0];
                 const worksheet = workbook.Sheets[sheetName];
-                const json = XLSX.utils.sheet_to_json<T>(worksheet, { defval: '', raw: false });
+                const json = XLSX.utils.sheet_to_json<T>(worksheet, { defval: '', raw: true });
                 // Normaliza cabeçalhos: trim + remove BOM residual caso o arquivo
                 // venha de um CSV convertido pelo Excel.
                 const cleaned = (json as any[]).map(row => {
