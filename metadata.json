@@ -1,0 +1,5 @@
+{
+  "name": "UniBudget",
+  "description": "A Configure, Price, Quote (CPQ) system specifically designed for the uniform industry. This tool transforms a list of raw materials into a final customer quote with precise cost and profit calculations, powered by a Supabase backend.",
+  "requestFramePermissions": []
+}
