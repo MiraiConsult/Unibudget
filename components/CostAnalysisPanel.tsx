@@ -1,9 +1,9 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useData } from '../contexts/DataContext';
 import { Card, CardHeader, CardTitle } from './ui/Card';
 import Spinner from './ui/Spinner';
 import EmptyState from './ui/EmptyState';
-import { Calculator, DollarSign, Filter, Percent } from 'lucide-react';
+import { Calculator, DollarSign, Filter, Percent, Layers, Table as TableIcon } from 'lucide-react';
 import type { FichaTecnica, InsumoEspecialOpcao, Insumo } from '../types';
 
 // Helper function
@@ -89,6 +89,84 @@ const CostAnalysisPanel: React.FC = () => {
             .map(key => insumosEspeciais.find(i => i.id === key))
             .filter((i): i is NonNullable<typeof i> => !!i);
     }, [selections, insumosEspeciais]);
+
+    // === Tabela de Preços por Malha ===
+    // Permite escolher qual "insumo especial" vira coluna (padrão: o que contém "malha" no nome).
+    const [meshSpecialId, setMeshSpecialId] = useState<number | null>(null);
+
+    useEffect(() => {
+        if (meshSpecialId !== null) return;
+        if (!insumosEspeciais.length) return;
+        const preferido = insumosEspeciais.find(i => /malha/i.test(i.nome));
+        setMeshSpecialId((preferido ?? insumosEspeciais[0]).id);
+    }, [insumosEspeciais, meshSpecialId]);
+
+    const meshPricingTable = useMemo(() => {
+        if (loading || !produtosBase.length || meshSpecialId === null) {
+            return { malhas: [] as Insumo[], rows: [] as Array<{
+                id: number;
+                nome: string;
+                baseCost: number;
+                hasMesh: boolean;
+                meshQuantity: number;
+                prices: Record<number, number | null>;
+            }> };
+        }
+
+        const insumosById = new Map<number, Insumo>(insumos.map(i => [i.id, i]));
+
+        const malhas = insumosEspeciaisOpcoes
+            .filter(opt => opt.insumo_especial_id === meshSpecialId)
+            .map(opt => insumosById.get(opt.insumo_id))
+            .filter((i): i is Insumo => !!i)
+            .sort((a, b) => a.nome.localeCompare(b.nome, 'pt-BR'));
+
+        const fichasByProduct = fichasTecnicas.reduce<Record<number, FichaTecnica[]>>((acc, ft) => {
+            if (!acc[ft.produto_base_id]) acc[ft.produto_base_id] = [];
+            acc[ft.produto_base_id].push(ft);
+            return acc;
+        }, {});
+
+        const markupValue = parametros?.[markupKey] || 1;
+
+        const rows = produtosBase.map(produto => {
+            const productFichas = fichasByProduct[produto.id] || [];
+
+            const baseCost = productFichas
+                .filter(ft => ft.insumo_id && ft.quantidade !== null)
+                .reduce((sum, ft) => {
+                    const insumo = insumosById.get(ft.insumo_id!);
+                    return sum + ((insumo?.custo_unitario || 0) * (ft.quantidade || 0));
+                }, 0);
+
+            const meshFicha = productFichas.find(ft => ft.insumo_especial_id === meshSpecialId);
+            const meshQuantity = meshFicha
+                ? (meshFicha.quantidade ?? meshFicha.quantidade_adulto ?? meshFicha.quantidade_infantil ?? 0) || 0
+                : 0;
+            const hasMesh = !!meshFicha;
+
+            const prices: Record<number, number | null> = {};
+            malhas.forEach(malha => {
+                if (!hasMesh) {
+                    prices[malha.id] = null;
+                    return;
+                }
+                const totalCost = baseCost + (malha.custo_unitario || 0) * meshQuantity;
+                prices[malha.id] = produto.preco_venda_manual ?? (totalCost * markupValue);
+            });
+
+            return {
+                id: produto.id,
+                nome: produto.nome,
+                baseCost,
+                hasMesh,
+                meshQuantity,
+                prices,
+            };
+        });
+
+        return { malhas, rows };
+    }, [loading, produtosBase, insumos, insumosEspeciaisOpcoes, fichasTecnicas, parametros, markupKey, meshSpecialId]);
 
     if (loading) {
         return <div className="flex justify-center items-center p-10"><Spinner /></div>;
@@ -182,6 +260,77 @@ const CostAnalysisPanel: React.FC = () => {
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-danger-700 font-semibold">{formatCurrency(produto.totalCost)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-success-700 font-semibold">{formatCurrency(produto.simulatedPrice)}</td>
                                         <td className="px-6 py-4 whitespace-nowrap text-sm text-slate-800 font-semibold">{produto.simulatedMarkup.toFixed(2)}x</td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+                )}
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle className="flex items-center">
+                        <TableIcon size={18} className="mr-2 text-primary-600"/> Tabela de Preços de Venda por Malha
+                    </CardTitle>
+                    <p className="text-sm text-slate-500 pt-1">
+                        Preço de venda final de cada produto para cada opção de malha, usando o nível de preço selecionado acima.
+                    </p>
+                </CardHeader>
+
+                {insumosEspeciais.length > 1 && (
+                    <div className="mb-4 max-w-sm">
+                        <label className="block text-sm font-medium text-slate-700 mb-1.5 flex items-center">
+                            <Layers size={14} className="mr-1.5 text-slate-500"/> Categoria de insumo especial
+                        </label>
+                        <select
+                            value={meshSpecialId ?? ''}
+                            onChange={e => setMeshSpecialId(e.target.value ? parseInt(e.target.value, 10) : null)}
+                            className="w-full p-2 border border-slate-300 rounded-lg bg-white focus:ring-2 focus:ring-primary-500 transition"
+                        >
+                            {insumosEspeciais.map(is => (
+                                <option key={is.id} value={is.id}>{is.nome}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
+
+                {meshPricingTable.malhas.length === 0 ? (
+                    <EmptyState
+                        icon={<TableIcon size={40}/>}
+                        message="Nenhuma malha cadastrada"
+                        description="Cadastre opções para o insumo especial de malha em Cadastros para visualizar esta tabela."
+                    />
+                ) : (
+                    <div className="overflow-x-auto">
+                        <table className="min-w-full">
+                            <thead className="bg-slate-50">
+                                <tr>
+                                    <th className="sticky left-0 bg-slate-50 px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider z-10">Produto</th>
+                                    {meshPricingTable.malhas.map(malha => (
+                                        <th key={malha.id} className="px-6 py-3 text-left text-xs font-semibold text-slate-500 uppercase tracking-wider whitespace-nowrap">
+                                            {malha.nome}
+                                        </th>
+                                    ))}
+                                </tr>
+                            </thead>
+                            <tbody className="bg-white divide-y divide-slate-100">
+                                {meshPricingTable.rows.map(produto => (
+                                    <tr key={produto.id} className="hover:bg-slate-50 transition-colors">
+                                        <td className="sticky left-0 bg-white hover:bg-slate-50 px-6 py-4 whitespace-nowrap text-sm font-medium text-slate-900 z-10">
+                                            {produto.nome}
+                                            {!produto.hasMesh && (
+                                                <span className="ml-2 text-xs font-normal text-slate-400">(sem malha na ficha)</span>
+                                            )}
+                                        </td>
+                                        {meshPricingTable.malhas.map(malha => {
+                                            const preco = produto.prices[malha.id];
+                                            return (
+                                                <td key={malha.id} className="px-6 py-4 whitespace-nowrap text-sm text-success-700 font-semibold">
+                                                    {preco === null ? <span className="text-slate-300">—</span> : formatCurrency(preco)}
+                                                </td>
+                                            );
+                                        })}
                                     </tr>
                                 ))}
                             </tbody>
